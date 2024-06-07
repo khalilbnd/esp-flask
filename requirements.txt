@@ -1,0 +1,6 @@
+flask
+sentence_transformers
+spacy
+nltk.corpus
+tensorflow
+gunicorn
