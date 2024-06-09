@@ -1,52 +1,73 @@
-from transformers import BloomTokenizerFast, BloomForCausalLM
-import torch
+from flask import Flask, request, jsonify
+from sentence_transformers import SentenceTransformer, util
+import spacy
+from nltk.corpus import wordnet
 
-# Load the tokenizer and model
-tokenizer = BloomTokenizerFast.from_pretrained("bigscience/bloom-560m")
-model = BloomForCausalLM.from_pretrained("bigscience/bloom-560m")
+# Load models
+model = SentenceTransformer('albert-base-v2')
+nlp = spacy.load('en_core_web_sm')
 
-def generate_question(prompt, max_length=100):
-    inputs = tokenizer(prompt, return_tensors="pt")
-    outputs = model.generate(inputs.input_ids, max_length=max_length, num_return_sequences=1)
-    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return generated_text
+# Initialize Flask app
+app = Flask(__name__)
 
-def parse_generated_text(generated_text):
-    try:
-        # Assuming the format is: "Question: ... Options: [opt1, opt2, opt3, opt4] Correct Answer Index: ..."
-        parts = generated_text.split("Options:")
-        if len(parts) < 2:
-            raise ValueError("Generated text does not contain 'Options:'")
+# def calculate_similarity(input_embedding, ref_embeddings):
+#     cosine_scores = util.cos_sim(input_embedding, ref_embeddings)
+#     max_similarity = cosine_scores.max().item()
+#     return max_similarity
 
-        question = parts[0].strip()
-        options_part = parts[1].split("Correct Answer Index:")
-        if len(options_part) < 2:
-            raise ValueError("Generated text does not contain 'Correct Answer Index:'")
+# def extract_key_concepts(text):
+#     doc = nlp(text)
+#     entities = {ent.text.lower() for ent in doc.ents}
+#     noun_chunks = {chunk.text.lower() for chunk in doc.noun_chunks}
+#     verbs = {token.lemma_.lower() for token in doc if token.pos_ in {"VERB", "ADJ", "ADV"}}
+#     return entities.union(noun_chunks).union(verbs)
 
-        options = [opt.strip() for opt in options_part[0].strip().split(",")]
-        correct_answer_index = int(options_part[1].strip())
+# def get_synonyms(word):
+#     synonyms = set()
+#     for syn in wordnet.synsets(word):
+#         for lemma in syn.lemmas():
+#             synonyms.add(lemma.name().lower().replace('_', ' '))
+#     return synonyms
 
-        return {
-            "question": question,
-            "options": options,
-            "correctAnswerIndex": correct_answer_index
-        }
-    except Exception as e:
-        print(f"Error parsing generated text: {generated_text}\nError: {e}")
-        return None
-def generate_and_print_question(prompt, max_length=100):
-    generated_text = generate_question(prompt, max_length=max_length)
-    question_data = parse_generated_text(generated_text)
-    if question_data:
-        print("Question:", question_data["question"])
-        for idx, option in enumerate(question_data["options"], start=1):
-            print(f"Option {idx}: {option}")
-        print("Correct Answer Index:", question_data["correctAnswerIndex"])
-    else:
-        print("Failed to generate a valid question.")
+# def expand_with_synonyms(concepts):
+#     expanded_concepts = set()
+#     for concept in concepts:
+#         expanded_concepts.add(concept)
+#         expanded_concepts.update(get_synonyms(concept))
+#     return expanded_concepts
 
-# Define a prompt for question generation
-prompt = "Generate a question about military law principles."
+def calculate_accuracy(input_text, ref_texts):
+    # Calculate semantic similarity
+    input_embedding = model.encode(input_text, convert_to_tensor=True)
+    ref_embeddings = model.encode(ref_texts, convert_to_tensor=True)
+    
+    
+  
 
-# Generate and print the question with options
-generate_and_print_question(prompt)
+    # Get the maximum similarity for each input concept across all reference concepts
+    cosine_scores = util.cos_sim(input_embedding, ref_embeddings)
+    
+    avg_concept_similarity = cosine_scores.item()
+    
+    
+    return round(avg_concept_similarity, 2)
+
+@app.route('/verify', methods=['POST'])
+def verify():
+    data = request.get_json()
+    ref_texts = data.get('ref_texts')
+    input_text = data.get('input_text')
+    
+    if not ref_texts or not input_text:
+        return jsonify({'error': 'Both reference texts and input text are required'}), 400
+    
+    accuracy = calculate_accuracy(input_text, ref_texts)
+    
+    return jsonify({
+        'ref_texts': ref_texts,
+        'input_text': input_text,
+        'accuracy': accuracy
+    })
+
+if __name__ == '__main__':
+    app.run(host="0.0.0.0",port=8000)
